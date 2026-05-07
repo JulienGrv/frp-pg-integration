@@ -15,6 +15,7 @@
 package ssh
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -36,6 +37,7 @@ type Gateway struct {
 	peerServerListener *netpkg.InternalListener
 
 	sshConfig *ssh.ServerConfig
+	authDB    *AuthorizedKeysDB
 }
 
 func NewGateway(
@@ -71,8 +73,33 @@ func NewGateway(
 	}
 	sshConfig.AddHostKey(privateKey)
 
-	sshConfig.NoClientAuth = cfg.AuthorizedKeysFile == ""
+	dbConfigured := cfg.AuthorizedKeysDB != nil && cfg.AuthorizedKeysDB.DSN != ""
+	sshConfig.NoClientAuth = !dbConfigured && cfg.AuthorizedKeysFile == ""
+
+	var authDB *AuthorizedKeysDB
+	if dbConfigured {
+		authDB, err = NewAuthorizedKeysDB(context.Background(), *cfg.AuthorizedKeysDB)
+		if err != nil {
+			return nil, fmt.Errorf("init authorized keys db: %w", err)
+		}
+	}
+
 	sshConfig.PublicKeyCallback = func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+		if authDB != nil {
+			fp := ssh.FingerprintSHA256(key)
+			user, ok, err := authDB.LookupUser(context.Background(), fp)
+			if err != nil {
+				log.Errorf("authorized keys db lookup error: %v", err)
+				return nil, fmt.Errorf("internal error")
+			}
+			if !ok {
+				return nil, fmt.Errorf("unknown public key for remoteAddr %q", conn.RemoteAddr())
+			}
+			return &ssh.Permissions{
+				Extensions: map[string]string{"user": user},
+			}, nil
+		}
+
 		authorizedKeysMap, err := loadAuthorizedKeysFromFile(cfg.AuthorizedKeysFile)
 		if err != nil {
 			log.Errorf("load authorized keys file error: %v", err)
@@ -92,6 +119,9 @@ func NewGateway(
 
 	ln, err := net.Listen("tcp", net.JoinHostPort(bindAddr, strconv.Itoa(cfg.BindPort)))
 	if err != nil {
+		if authDB != nil {
+			authDB.Close()
+		}
 		return nil, err
 	}
 	return &Gateway{
@@ -99,6 +129,7 @@ func NewGateway(
 		ln:                 ln,
 		peerServerListener: peerServerListener,
 		sshConfig:          sshConfig,
+		authDB:             authDB,
 	}, nil
 }
 
@@ -113,7 +144,11 @@ func (g *Gateway) Run() {
 }
 
 func (g *Gateway) Close() error {
-	return g.ln.Close()
+	err := g.ln.Close()
+	if g.authDB != nil {
+		g.authDB.Close()
+	}
+	return err
 }
 
 func (g *Gateway) handleConn(conn net.Conn) {

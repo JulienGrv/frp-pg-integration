@@ -73,5 +73,15 @@ func (v *ConfigValidator) ValidateServerConfig(c *v1.ServerConfig) (Warning, err
 			errs = AppendError(errs, fmt.Errorf("invalid http plugin ops, optional values are %v", SupportedHTTPPluginOps))
 		}
 	}
+
+	if db := c.SSHTunnelGateway.AuthorizedKeysDB; db != nil {
+		if db.DSN == "" {
+			errs = AppendError(errs, fmt.Errorf("sshTunnelGateway.authorizedKeysDB.dsn is required when authorizedKeysDB is set"))
+		}
+		if db.LookupQuery == "" {
+			errs = AppendError(errs, fmt.Errorf("sshTunnelGateway.authorizedKeysDB.lookupQuery is required when authorizedKeysDB is set"))
+		}
+	}
+
 	return warnings, errs
 }

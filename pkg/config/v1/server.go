@@ -204,10 +204,25 @@ type TLSServerConfig struct {
 }
 
 type SSHTunnelGateway struct {
-	BindPort              int    `json:"bindPort,omitempty"`
-	PrivateKeyFile        string `json:"privateKeyFile,omitempty"`
-	AutoGenPrivateKeyPath string `json:"autoGenPrivateKeyPath,omitempty"`
-	AuthorizedKeysFile    string `json:"authorizedKeysFile,omitempty"`
+	BindPort              int                  `json:"bindPort,omitempty"`
+	PrivateKeyFile        string               `json:"privateKeyFile,omitempty"`
+	AutoGenPrivateKeyPath string               `json:"autoGenPrivateKeyPath,omitempty"`
+	AuthorizedKeysFile    string               `json:"authorizedKeysFile,omitempty"`
+	AuthorizedKeysDB      *AuthorizedKeysDBConfig `json:"authorizedKeysDB,omitempty"`
+}
+
+// AuthorizedKeysDBConfig configures a Postgres-backed lookup for SSH
+// authorized keys. When set, it takes precedence over AuthorizedKeysFile.
+//
+// LookupQuery must accept a single $1 parameter — the SHA256 fingerprint
+// of the incoming public key in the canonical "SHA256:<base64>" format
+// produced by ssh-keygen -lf — and return a single column: the username
+// to associate with the connection. No row means auth is rejected.
+type AuthorizedKeysDBConfig struct {
+	DSN          string `json:"dsn,omitempty"`
+	LookupQuery  string `json:"lookupQuery,omitempty"`
+	MaxConns     int32  `json:"maxConns,omitempty"`
+	QueryTimeoutMs int  `json:"queryTimeoutMs,omitempty"`
 }
 
 func (c *SSHTunnelGateway) Complete() {
