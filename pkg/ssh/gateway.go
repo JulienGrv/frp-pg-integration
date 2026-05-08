@@ -86,8 +86,11 @@ func NewGateway(
 
 	sshConfig.PublicKeyCallback = func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 		if authDB != nil {
-			fp := ssh.FingerprintSHA256(key)
-			user, ok, err := authDB.LookupUser(context.Background(), fp)
+			// Look up by the marshaled public key blob (BYTEA in Postgres).
+			// Alternative: pass ssh.FingerprintSHA256(key) instead — the DB
+			// then stores a "SHA256:..." string keyed column. Both work; raw
+			// bytes is more direct, fingerprint is friendlier to log/audit.
+			user, ok, err := authDB.LookupUser(context.Background(), key.Marshal())
 			if err != nil {
 				log.Errorf("authorized keys db lookup error: %v", err)
 				return nil, fmt.Errorf("internal error")

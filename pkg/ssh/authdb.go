@@ -79,14 +79,22 @@ func NewAuthorizedKeysDB(ctx context.Context, cfg v1.AuthorizedKeysDBConfig) (*A
 	}, nil
 }
 
-// LookupUser runs the configured query with the SHA256 fingerprint and
-// returns the matching username. found=false means the key is unknown
-// (not an error condition — auth simply fails).
-func (a *AuthorizedKeysDB) LookupUser(ctx context.Context, fingerprint string) (user string, found bool, err error) {
+// LookupUser runs the configured query with the marshaled SSH public
+// key (the binary wire format from ssh.PublicKey.Marshal) and returns
+// the matching username. found=false means the key is unknown (not an
+// error condition — auth simply fails).
+//
+// The lookup parameter is the raw key blob, expected to be stored as
+// BYTEA in Postgres. An equally valid alternative is to look up by
+// SHA256 fingerprint (ssh.FingerprintSHA256(key)) — that's smaller and
+// plays nicer with logging/audit tools, at the cost of needing a
+// derived column. We chose raw bytes here for directness; switching is
+// a one-line change at the call site.
+func (a *AuthorizedKeysDB) LookupUser(ctx context.Context, pubKeyBlob []byte) (user string, found bool, err error) {
 	queryCtx, cancel := context.WithTimeout(ctx, a.queryTimeout)
 	defer cancel()
 
-	err = a.pool.QueryRow(queryCtx, a.lookupQuery, fingerprint).Scan(&user)
+	err = a.pool.QueryRow(queryCtx, a.lookupQuery, pubKeyBlob).Scan(&user)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", false, nil

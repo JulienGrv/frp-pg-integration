@@ -214,10 +214,15 @@ type SSHTunnelGateway struct {
 // AuthorizedKeysDBConfig configures a Postgres-backed lookup for SSH
 // authorized keys. When set, it takes precedence over AuthorizedKeysFile.
 //
-// LookupQuery must accept a single $1 parameter — the SHA256 fingerprint
-// of the incoming public key in the canonical "SHA256:<base64>" format
-// produced by ssh-keygen -lf — and return a single column: the username
-// to associate with the connection. No row means auth is rejected.
+// LookupQuery must accept a single $1 parameter — the marshaled SSH
+// public key (binary wire format, BYTEA on the Postgres side) — and
+// return a single column: the username to associate with the
+// connection. No row means auth is rejected.
+//
+// If you'd rather index by SHA256 fingerprint (smaller, log-friendly
+// "SHA256:<base64>" strings), swap the call site in pkg/ssh/gateway.go
+// to pass ssh.FingerprintSHA256(key) instead of key.Marshal() and store
+// the fingerprint as TEXT.
 type AuthorizedKeysDBConfig struct {
 	DSN          string `json:"dsn,omitempty"`
 	LookupQuery  string `json:"lookupQuery,omitempty"`
