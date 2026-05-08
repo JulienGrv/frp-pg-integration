@@ -16,6 +16,11 @@ sshTunnelGateway.bindPort = 0
 sshTunnelGateway.privateKeyFile = ""
 sshTunnelGateway.autoGenPrivateKeyPath = ""
 sshTunnelGateway.authorizedKeysFile = ""
+
+# optional: Postgres-backed authorized keys lookup
+# [sshTunnelGateway.authorizedKeysDB]
+# dsn         = "postgres://user:pass@host:5432/db?sslmode=require"
+# lookupQuery = "SELECT username FROM ssh_keys WHERE pubkey = $1 AND active = true"
 ```
 
 | Field | Type | Description | Required |
@@ -24,6 +29,7 @@ sshTunnelGateway.authorizedKeysFile = ""
 | privateKeyFile | string | Default value is empty. The private key file used by the ssh server. If it is empty, frps will read the private key file under the autoGenPrivateKeyPath path. It can reuse the /home/user/.ssh/id_rsa file on the local machine, or a custom path can be specified.| No |
 | autoGenPrivateKeyPath  | string |Default value is ./.autogen_ssh_key. If the file does not exist or its content is empty, frps will automatically generate RSA private key file content and store it in this file.|No|
 | authorizedKeysFile  | string |Default value is empty. If it is empty, ssh client authentication is not authenticated. If it is not empty, it can implement ssh password-free login authentication. It can reuse the local /home/user/.ssh/authorized_keys file or a custom path can be specified.| No |
+| authorizedKeysDB  | object | Optional Postgres-backed lookup for authorized keys. When set, takes precedence over `authorizedKeysFile` and avoids loading the keyset into memory on every connect. See [Postgres-Backed Authorized Keys](#postgres-backed-authorized-keys) below. | No |
 
 ### Basic Usage
 
@@ -156,5 +162,96 @@ sshTunnelGateway.authorizedKeysFile = "/var/frps/custom_authorized_keys_file"
 ```
 
 Specify the path to a custom `authorized_keys` file.
+
+### Postgres-Backed Authorized Keys
+
+For large keysets (thousands of keys or more), `authorizedKeysFile` becomes a bottleneck — frps reloads and parses the entire file on every incoming SSH connection. A Postgres-backed lookup replaces this with a single indexed query per connect, with no in-memory snapshot of the keyset on the frps side.
+
+When `sshTunnelGateway.authorizedKeysDB` is configured, it takes precedence over `authorizedKeysFile`. If only `authorizedKeysFile` is set, behavior is unchanged.
+
+#### Configuration
+
+```toml
+# frps.toml
+sshTunnelGateway.bindPort = 2200
+
+[sshTunnelGateway.authorizedKeysDB]
+dsn            = "postgres://frp:secret@db.internal:5432/frp?sslmode=require"
+lookupQuery    = "SELECT username FROM ssh_keys WHERE pubkey = $1 AND active = true"
+maxConns       = 10      # optional, pgxpool max connection count
+queryTimeoutMs = 3000    # optional, per-lookup timeout in milliseconds (default 5000)
+```
+
+| Field | Type | Description | Required |
+| :--- | :--- | :--- | :--- |
+| dsn | string | Standard Postgres connection string consumed by pgx. | Yes |
+| lookupQuery | string | SQL run on every SSH auth attempt. Receives the marshaled SSH public key as `$1` (BYTEA) and must return a single column: the username to associate with the connection. Zero rows means auth is rejected. | Yes |
+| maxConns | int32 | Maximum size of the pgxpool connection pool. Defaults to pgx's library default. | No |
+| queryTimeoutMs | int | Per-lookup query timeout in milliseconds. Defaults to 5000. | No |
+
+The `lookupQuery` is fully under your control — it can join other tables, filter on activation flags, IP allowlists, expirations, or any other column relevant to your environment. The username returned is exposed downstream as the SSH `Permissions.Extensions["user"]` value, just like the comment field of the file-based loader.
+
+#### Schema
+
+The default contract uses raw key bytes as the lookup key:
+
+```sql
+CREATE TABLE ssh_keys (
+  pubkey   BYTEA PRIMARY KEY,
+  username TEXT  NOT NULL,
+  active   BOOLEAN NOT NULL DEFAULT true
+);
+```
+
+The `pubkey` column stores the binary wire format of the SSH public key (the same bytes as `ssh.PublicKey.Marshal()` in Go). Postgres' B-tree handles 270-byte (RSA-2048) or 540-byte (RSA-4096) keys without issue.
+
+##### Alternative: SHA256 fingerprint as the lookup key
+
+A common variant is to index by SHA256 fingerprint (`SHA256:<base64>` strings produced by `ssh-keygen -lf`) instead of raw bytes. Fingerprints are smaller, fixed size, and friendlier for log/audit pipelines. The trade-off is that fingerprints are one-way hashes, so the DB alone can't reconstruct keys.
+
+To switch, change one line at the call site in `pkg/ssh/gateway.go` from:
+
+```go
+user, ok, err := authDB.LookupUser(ctx, key.Marshal())
+```
+
+to:
+
+```go
+user, ok, err := authDB.LookupUser(ctx, []byte(ssh.FingerprintSHA256(key)))
+```
+
+and store the fingerprint in a `TEXT` column instead of `BYTEA`.
+
+#### Importing an Existing authorized_keys File
+
+The `frps-import-keys` CLI parses an OpenSSH `authorized_keys` file via `golang.org/x/crypto/ssh` (handles options prefixes, quoted comments, blank lines, and embedded spaces correctly) and bulk-loads it into the lookup table using `COPY` into a TEMP staging table followed by an upsert.
+
+```bash
+go build -o /usr/local/bin/frps-import-keys ./cmd/frps-import-keys
+
+frps-import-keys \
+  -file /etc/frp/authorized_keys \
+  -dsn "postgres://frp:secret@db.internal:5432/frp?sslmode=require" \
+  -table ssh_keys \
+  -on-conflict update
+```
+
+| Flag | Default | Description |
+| :--- | :--- | :--- |
+| `-file` | (required) | Path to the OpenSSH authorized_keys file. |
+| `-dsn` | (required) | Postgres DSN. |
+| `-table` | `ssh_keys` | Target table name. |
+| `-pubkey-col` | `pubkey` | BYTEA column holding the marshaled public key. |
+| `-username-col` | `username` | TEXT column holding the username/comment. |
+| `-on-conflict` | `update` | Conflict strategy: `update` (overwrite username), `ignore` (keep existing), or `error` (abort on duplicate). |
+| `-truncate` | `false` | TRUNCATE the target table before import. |
+
+#### Operational Notes
+
+- **Hot updates.** Inserts, updates, and deletes against the lookup table take effect immediately — frps doesn't cache. `UPDATE ssh_keys SET active = false WHERE ...` revokes a key on the next connection attempt, no restart required.
+- **DB reachability at startup.** The pool is created at gateway start and pings the database. If Postgres is unreachable at boot, frps fails fast with a clear error rather than silently disabling auth.
+- **DB outages during operation.** A failed lookup is surfaced as an internal error to the SSH client and logged on the frps side. The connection is rejected, never silently allowed.
+- **Token authentication.** As with `authorizedKeysFile`, this only governs SSH login auth. It is independent from frps token authentication and the two stack in the documented order (SSH first, then token).
 
 Note that changes to the authorizedKeysFile file may result in SSH authentication failures. You may need to re-add the public key information to the authorizedKeysFile.

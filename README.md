@@ -1309,6 +1309,19 @@ This is equivalent to:
 frpc tcp --proxy_name "test-tcp" --local_ip 127.0.0.1 --local_port 8080 --remote_port 9090
 ```
 
+For SSH public-key authentication, frps can be configured with either an OpenSSH `authorized_keys` file or — for large keysets where reloading the file on every connect becomes a bottleneck — a Postgres-backed lookup that performs a single indexed query per connection:
+
+```toml
+# frps.toml
+sshTunnelGateway.bindPort = 2200
+
+[sshTunnelGateway.authorizedKeysDB]
+dsn         = "postgres://frp:secret@db.internal:5432/frp?sslmode=require"
+lookupQuery = "SELECT username FROM ssh_keys WHERE pubkey = $1 AND active = true"
+```
+
+A small CLI (`cmd/frps-import-keys`) is provided to migrate an existing `authorized_keys` file into the lookup table. See [Postgres-Backed Authorized Keys](/doc/ssh_tunnel_gateway.md#postgres-backed-authorized-keys) for the full schema, query contract, and operational notes.
+
 Please refer to this [document](/doc/ssh_tunnel_gateway.md) for more information.
 
 ### Virtual Network (VirtualNet)
