@@ -204,10 +204,10 @@ type TLSServerConfig struct {
 }
 
 type SSHTunnelGateway struct {
-	BindPort              int                  `json:"bindPort,omitempty"`
-	PrivateKeyFile        string               `json:"privateKeyFile,omitempty"`
-	AutoGenPrivateKeyPath string               `json:"autoGenPrivateKeyPath,omitempty"`
-	AuthorizedKeysFile    string               `json:"authorizedKeysFile,omitempty"`
+	BindPort              int                     `json:"bindPort,omitempty"`
+	PrivateKeyFile        string                  `json:"privateKeyFile,omitempty"`
+	AutoGenPrivateKeyPath string                  `json:"autoGenPrivateKeyPath,omitempty"`
+	AuthorizedKeysFile    string                  `json:"authorizedKeysFile,omitempty"`
 	AuthorizedKeysDB      *AuthorizedKeysDBConfig `json:"authorizedKeysDB,omitempty"`
 }
 
@@ -224,10 +224,10 @@ type SSHTunnelGateway struct {
 // to pass ssh.FingerprintSHA256(key) instead of key.Marshal() and store
 // the fingerprint as TEXT.
 type AuthorizedKeysDBConfig struct {
-	DSN          string `json:"dsn,omitempty"`
-	LookupQuery  string `json:"lookupQuery,omitempty"`
-	MaxConns     int32  `json:"maxConns,omitempty"`
-	QueryTimeoutMs int  `json:"queryTimeoutMs,omitempty"`
+	DSN            string `json:"dsn,omitempty"`
+	LookupQuery    string `json:"lookupQuery,omitempty"`
+	MaxConns       int32  `json:"maxConns,omitempty"`
+	QueryTimeoutMs int    `json:"queryTimeoutMs,omitempty"`
 }
 
 func (c *SSHTunnelGateway) Complete() {

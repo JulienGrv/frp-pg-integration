@@ -37,7 +37,7 @@ import (
 func TestKeepControllerWorkingRaceWithStop(t *testing.T) {
 	// Many iterations with a start barrier so the read in keepControllerWorking
 	// and the nil assignment fire concurrently, widening the race window.
-	for i := 0; i < 2000; i++ {
+	for i := range 2000 {
 		ctx, cancel := context.WithCancelCause(context.Background())
 
 		ctl := &Control{doneCh: make(chan struct{})}
@@ -66,7 +66,7 @@ func TestKeepControllerWorkingRaceWithStop(t *testing.T) {
 		}()
 
 		// Writer: mimics stop() niling svr.ctl under the lock while the control
-		// connection is torn down (doneCh closed). Cancelling the context lets
+		// connection is torn down (doneCh closed). Canceling the context lets
 		// keepControllerWorking's BackoffUntil return promptly.
 		go func() {
 			defer wg.Done()

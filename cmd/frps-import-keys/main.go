@@ -38,13 +38,13 @@ type record struct {
 
 func main() {
 	var (
-		file      = flag.String("file", "", "path to authorized_keys file (required)")
-		dsn       = flag.String("dsn", "", "Postgres DSN (required), e.g. postgres://user:pass@host/db")
-		table     = flag.String("table", "ssh_keys", "target table name")
-		pubCol    = flag.String("pubkey-col", "pubkey", "BYTEA column holding the marshaled public key")
-		userCol   = flag.String("username-col", "username", "TEXT column holding the username/comment")
+		file       = flag.String("file", "", "path to authorized_keys file (required)")
+		dsn        = flag.String("dsn", "", "Postgres DSN (required), e.g. postgres://user:pass@host/db")
+		table      = flag.String("table", "ssh_keys", "target table name")
+		pubCol     = flag.String("pubkey-col", "pubkey", "BYTEA column holding the marshaled public key")
+		userCol    = flag.String("username-col", "username", "TEXT column holding the username/comment")
 		onConflict = flag.String("on-conflict", "update", "conflict strategy: update | ignore | error")
-		truncate  = flag.Bool("truncate", false, "TRUNCATE the target table before import")
+		truncate   = flag.Bool("truncate", false, "TRUNCATE the target table before import")
 	)
 	flag.Parse()
 
@@ -79,9 +79,9 @@ func parseAuthorizedKeys(path string) ([]record, error) {
 	}
 
 	var (
-		out      []record
-		lineNum  int
-		skipped  int
+		out     []record
+		lineNum int
+		skipped int
 	)
 	rest := data
 	for len(rest) > 0 {
@@ -131,7 +131,7 @@ func importRecords(
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if truncate {
 		if _, err := tx.Exec(ctx, fmt.Sprintf("TRUNCATE TABLE %s", quoteIdent(table))); err != nil {

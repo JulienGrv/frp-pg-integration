@@ -36,7 +36,7 @@ type AuthorizedKeysDB struct {
 	queryTimeout time.Duration
 }
 
-// NewAuthorizedKeysDB initialises the connection pool and verifies it
+// NewAuthorizedKeysDB initializes the connection pool and verifies it
 // can reach the database. The caller owns the returned value and must
 // call Close on shutdown.
 func NewAuthorizedKeysDB(ctx context.Context, cfg v1.AuthorizedKeysDBConfig) (*AuthorizedKeysDB, error) {
