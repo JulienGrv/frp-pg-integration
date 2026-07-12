@@ -148,8 +148,15 @@ type Service struct {
 
 	// service context
 	ctx context.Context
-	// call cancel to stop service
-	cancel                   context.CancelCauseFunc
+	// call cancel to stop service. Guarded by ctlMu together with closed and
+	// gracefulShutdownDuration: the SSH tunnel server (pkg/ssh) runs Run and
+	// Close on different goroutines, so Close may fire before Run has
+	// assigned cancel.
+	cancel context.CancelCauseFunc
+	// closed records a Close/GracefulClose that arrived before Run assigned
+	// cancel; Run checks it and shuts down immediately instead of running a
+	// closed service.
+	closed                   bool
 	gracefulShutdownDuration time.Duration
 
 	connectorCreator func(context.Context, *v1.ClientCommonConfig) Connector
@@ -222,7 +229,14 @@ func NewService(options ServiceOptions) (*Service, error) {
 func (svr *Service) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancelCause(ctx)
 	svr.ctx = xlog.NewContext(ctx, xlog.FromContextSafe(ctx))
+	svr.ctlMu.Lock()
 	svr.cancel = cancel
+	closed := svr.closed
+	svr.ctlMu.Unlock()
+	if closed {
+		// Close raced ahead of Run; honor it instead of running a closed service.
+		cancel(nil)
+	}
 
 	// set custom DNSServer
 	if svr.common.DNSServer != "" {
@@ -426,8 +440,16 @@ func (svr *Service) Close() {
 }
 
 func (svr *Service) GracefulClose(d time.Duration) {
+	svr.ctlMu.Lock()
 	svr.gracefulShutdownDuration = d
-	svr.cancel(nil)
+	svr.closed = true
+	cancel := svr.cancel
+	svr.ctlMu.Unlock()
+	// cancel is nil until Run assigns it; in that case closed makes Run shut
+	// down as soon as it starts.
+	if cancel != nil {
+		cancel(nil)
+	}
 }
 
 func (svr *Service) stop() {
