@@ -66,6 +66,17 @@ func (pa *Allocator) GetByName(portName string) int {
 		}
 		l.Close()
 
+		// SO_REUSEADDR lets the wildcard bind above succeed even while
+		// another process listens on 127.0.0.1 only (e.g. an IDE helper),
+		// but a consumer binding 127.0.0.1 would then fail with
+		// "address already in use". Check the loopback address too.
+		lo, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		if err != nil {
+			pa.used.Insert(port)
+			continue
+		}
+		lo.Close()
+
 		udpAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort("0.0.0.0", strconv.Itoa(port)))
 		if err != nil {
 			continue
