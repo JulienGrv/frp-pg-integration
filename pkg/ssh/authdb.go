@@ -47,12 +47,9 @@ func NewAuthorizedKeysDB(ctx context.Context, cfg v1.AuthorizedKeysDBConfig) (*A
 		return nil, errors.New("authorizedKeysDB.lookupQuery is required")
 	}
 
-	poolCfg, err := pgxpool.ParseConfig(cfg.DSN)
+	poolCfg, err := buildPoolConfig(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("parse authorizedKeysDB dsn: %w", err)
-	}
-	if cfg.MaxConns > 0 {
-		poolCfg.MaxConns = cfg.MaxConns
+		return nil, err
 	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
@@ -77,6 +74,22 @@ func NewAuthorizedKeysDB(ctx context.Context, cfg v1.AuthorizedKeysDBConfig) (*A
 		lookupQuery:  cfg.LookupQuery,
 		queryTimeout: timeout,
 	}, nil
+}
+
+func buildPoolConfig(cfg v1.AuthorizedKeysDBConfig) (*pgxpool.Config, error) {
+	poolCfg, err := pgxpool.ParseConfig(cfg.DSN)
+	if err != nil {
+		return nil, fmt.Errorf("parse authorizedKeysDB dsn: %w", err)
+	}
+	if cfg.MaxConns > 0 {
+		poolCfg.MaxConns = cfg.MaxConns
+	}
+	// ponytail: keep the pool fully warm — pgxpool opens MinConns eagerly at
+	// creation, so a pod-restart reconnect storm no longer pays connection
+	// handshakes inside queryTimeoutMs. Costs MaxConns idle Postgres
+	// connections; add a minConns knob if that ever matters.
+	poolCfg.MinConns = poolCfg.MaxConns
+	return poolCfg, nil
 }
 
 // LookupUser runs the configured query with the marshaled SSH public
