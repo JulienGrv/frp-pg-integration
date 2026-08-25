@@ -19,7 +19,7 @@ func TestGetSkipsLoopbackOnlyListeners(t *testing.T) {
 	defer occupied.Close()
 
 	pa := NewAllocator(from, to, 1, 0)
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		if got := pa.Get(); got == from {
 			t.Fatalf("allocator handed out port %d, which is held on 127.0.0.1 by another listener", got)
 		}
